@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Oculi</string>
+    <string name="server_address">http://192.168.100.62:8000</string>
+</resources>
