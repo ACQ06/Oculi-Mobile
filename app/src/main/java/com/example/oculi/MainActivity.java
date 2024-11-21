@@ -9,6 +9,7 @@ import android.util.Base64;
 import android.util.Log;
 import android.view.Window;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -41,7 +42,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.CompletableFuture;
@@ -55,6 +55,8 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
     private final OkHttpClient client = new OkHttpClient();
     private ImageCapture imageCapture;
     private TextToSpeech textToSpeech;
+    private boolean isScanning = false;
+    private Button scanButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -77,26 +79,17 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
     private void init(){
         requestPermissions();
         textToSpeech = new TextToSpeech(this, this);
-        findViewById(R.id.scanButton).setOnClickListener(v -> {
-            speak("Scanning");
-            Toast.makeText(this, "Scanning...", Toast.LENGTH_SHORT).show();
-            capturePhotoAsBase64().thenAccept(base64Image -> {
-                if (base64Image != null) {
 
-                    JSONObject jsonBody = new JSONObject();
-                    try {
-                        jsonBody.put("image", base64Image);
-                    } catch (JSONException e) {
-                        e.printStackTrace();
-                    }
+        scanButton = findViewById(R.id.scanButton);
 
-                    makePostRequest(this.getString(R.string.server_address)+"/api/model/extract-text", jsonBody.toString());
-                } else {
-                    speak("Failed to capture photo.");
-                    Toast.makeText(this, "Failed to capture photo.", Toast.LENGTH_SHORT).show();
-                    Log.e("CameraXApp", "Failed to capture photo.");
-                }
-            });
+        scanButton.setOnClickListener(v -> {
+            if (isScanning) {
+                // If currently scanning, stop the process and clear the TTS queue
+                stopScanning();
+            } else {
+                // If not scanning, start scanning
+                startScanning();
+            }
         });
     }
 
@@ -131,6 +124,45 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
 //                Toast.makeText(this, "Microphone permission is required", Toast.LENGTH_SHORT).show();
 //            }
 //        }
+    }
+
+    private void startScanning() {
+        speak("Scanning");
+        Toast.makeText(this, "Scanning...", Toast.LENGTH_SHORT).show();
+        isScanning = true;
+        scanButton.setText("Stop");  // Change button text to "Stop"
+
+        // Capture photo and process
+        capturePhotoAsBase64().thenAccept(base64Image -> {
+            if (base64Image != null) {
+                JSONObject jsonBody = new JSONObject();
+                try {
+                    jsonBody.put("image", base64Image);
+                } catch (JSONException e) {
+                    e.printStackTrace();
+                }
+
+                makePostRequest(this.getString(R.string.server_address) + "/api/model/extract-text", jsonBody.toString());
+            } else {
+                speak("Failed to capture photo.");
+                Toast.makeText(this, "Failed to capture photo.", Toast.LENGTH_SHORT).show();
+                Log.e("CameraXApp", "Failed to capture photo.");
+            }
+        });
+    }
+
+    private void stopScanning() {
+        // Stop any ongoing text-to-speech queues
+        if (textToSpeech != null) {
+            textToSpeech.stop();
+        }
+
+        // Change the button back to "Scan"
+        scanButton.setText("Scan");
+
+        // Reset scanning state
+        isScanning = false;
+        Toast.makeText(this, "Scanning stopped", Toast.LENGTH_SHORT).show();
     }
 
     public CompletableFuture<String> capturePhotoAsBase64() {
@@ -176,8 +208,10 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
                 // Build the Preview use case
                 Preview preview = new Preview.Builder().build();
 
-                // Build the ImageCapture use case
-                imageCapture = new ImageCapture.Builder().build();
+                // Build the ImageCapture use case with flashlight (torch mode)
+                imageCapture = new ImageCapture.Builder()
+                        .setFlashMode(ImageCapture.FLASH_MODE_ON) // Enable the flashlight in torch mode
+                        .build();
 
                 // Set up camera selector to use the back camera
                 CameraSelector cameraSelector = new CameraSelector.Builder()
@@ -196,29 +230,9 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
         }, ContextCompat.getMainExecutor(this));
     }
 
-    // GET Request
-    public void makeGetRequest(String url) {
-        Request request = new Request.Builder()
-                .url(url)
-                .build();
-
-        client.newCall(request).enqueue(new Callback() {
-            @Override
-            public void onFailure(Call call, IOException e) {
-                e.printStackTrace();
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                if (response.isSuccessful()) {
-                    System.out.println("GET Response: " + response.body().string());
-                }
-            }
-        });
-    }
-
     // POST Request
     public void makePostRequest(String url, String json) {
+        speak("Please wait...");
         OkHttpClient client = new OkHttpClient.Builder()
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
@@ -236,6 +250,10 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
             @Override
             public void onFailure(Call call, IOException e) {
                 e.printStackTrace();
+                // Loop through each item in the JSONArray
+                runOnUiThread(() -> {
+                    speak("Request Error");
+                });
             }
 
             @Override
@@ -253,6 +271,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
 
                         // Loop through each item in the JSONArray
                         runOnUiThread(() -> {
+
                             for (int i = 0; i < message.length(); i++) {
                                 try {
                                     // Extract each message
@@ -338,7 +357,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
     public void onInit(int status) {
         if (status == TextToSpeech.SUCCESS) {
             // TextToSpeech engine is initialized successfully
-            speak("Hello, Vision AID Initialized");
+            speak("Hello, ready for scan");
         } else {
             // Initialization failed
             Log.e("TTS", "Initialization failed.");
